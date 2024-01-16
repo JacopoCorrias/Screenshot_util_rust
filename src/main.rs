@@ -1,20 +1,12 @@
-use env_logger::fmt::Color;
 use screenshots::Screen;
-use std::{
-    ops::{Add, Sub, RangeInclusive},
-    thread::current,
-};
-use winit::window::CursorIcon;
+use std::ops::{Add, Div};
 
 use eframe::{
     egui::{
-        self, pos2, scroll_area::ScrollBarVisibility, Button, CentralPanel, Frame, Id, Layout,
-        Pos2, Rect, Sense, Ui, Vec2, ViewportCommand,
+        self, pos2, Button, CentralPanel, Frame, Id, Layout, Pos2, Rect, Sense, Ui, Vec2,
+        ViewportCommand,
     },
-    emath::{Align, Align2},
-    epaint::{stats::AllocInfo, vec2, Color32, RectShape, Rgba, Rounding, Stroke},
-    glow::MINOR_VERSION,
-    App,
+    epaint::{ vec2, Color32, Rgba, Rounding, Stroke}
 };
 
 fn main() -> Result<(), eframe::Error> {
@@ -35,13 +27,11 @@ fn main() -> Result<(), eframe::Error> {
 struct MyApp {
     state: AppState,
     selected_area: [Pos2; 2],
-    crop_area: [Pos2; 2],
     texture: Option<egui::TextureHandle>,
     capture: bool,
     crop: bool,
     image: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
     area: bool,
-    //  resizing: bool,
     button_position: Pos2,
     dimensions: Vec2,
     resizing: bool,
@@ -67,7 +57,6 @@ impl Default for MyApp {
             resizing: false,
             frame: TouchedFrame::None,
             selected_area: [Pos2::ZERO, Pos2::ZERO],
-            crop_area: [Pos2::ZERO, Pos2::ZERO],
             texture: None,
             capture: false,
             image: None,
@@ -75,7 +64,7 @@ impl Default for MyApp {
             crop: false,
             display_rect: egui::Rect::ZERO,
             shrink_factor: 0.,
-            min_pos_top: Pos2::ZERO
+            min_pos_top: Pos2::ZERO,
         }
     }
 }
@@ -98,12 +87,13 @@ impl eframe::App for MyApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
+        let monitor_rect = Rect::from_min_size(Pos2::ZERO, monitor_size);
         match self.state {
             AppState::MainApp => {
                 //Navbar
                 egui::TopBottomPanel::top("buttons navbar").show(ctx, |ui| {
-                    //Workaroud for borderless fullscreen transparency bug
-                    let monitor_size = monitor_size.add(Vec2::new(1.0, 1.0));
+                    /*                     //Workaroud for borderless fullscreen transparency bug
+                    let monitor_size = monitor_size.add(Vec2::new(1.0, 1.0)); */
 
                     //Organize buttons in horizontal navbar
                     ui.horizontal(|ui| {
@@ -111,7 +101,9 @@ impl eframe::App for MyApp {
                             // workaroud to borderless fullscreen render bug when transparent
                             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(Pos2::ZERO));
                             ctx.send_viewport_cmd(ViewportCommand::Decorations(false));
-                            ctx.send_viewport_cmd(ViewportCommand::InnerSize(monitor_size));
+                            ctx.send_viewport_cmd(ViewportCommand::InnerSize(
+                                monitor_size.add(Vec2::new(1.0, 1.0)),
+                            ));
                             ctx.send_viewport_cmd(ViewportCommand::WindowLevel(
                                 egui::WindowLevel::AlwaysOnTop,
                             ));
@@ -122,10 +114,9 @@ impl eframe::App for MyApp {
                     });
                 });
 
-                egui::CentralPanel::default().show(ctx, |ui| {
+                CentralPanel::default().show(ctx, |ui| {
                     if let Some(texture) = self.texture.as_ref() {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                            println!("BBBBBBBBBBBBBBB:{:?}", self.selected_area[0]);
                             let uv = egui::Rect::from_two_pos(
                                 Pos2::new(
                                     self.selected_area[0].x / monitor_size.x,
@@ -143,43 +134,16 @@ impl eframe::App for MyApp {
                                 self.selected_area[1],
                             );
 
-                            //space is where image is going to be rendered
-                            let center = Pos2::new(monitor_size.x / 2.0, monitor_size.y / 2.0);
-                            let mut space = egui::Rect::from_center_size(center, selection.size());
 
-                            /*                             //Modify space in order to render image clearly and not stretched
-                            if !ui.available_rect_before_wrap().contains_rect(space) {
-                                let available_width = ui.available_rect_before_wrap().width();
-                                let available_height = ui.available_rect_before_wrap().height();
-
-                                let aspect_ratio = selection.aspect_ratio();
-                                let new_width = available_height * aspect_ratio;
-
-                                if new_width <= available_width {
-                                    ui.set_width(new_width);
-                                    space = ui.available_rect_before_wrap();
-                                    space.set_center(Pos2::new(center.x, space.center().y));
-                                } else {
-                                    let new_height = available_width / aspect_ratio;
-                                    ui.set_height(new_height);
-                                    space = ui.available_rect_before_wrap();
-                                    space.set_center(Pos2::new(space.center().x, center.y));
-                                }
-                            } */
                             ui.allocate_ui_with_layout(
                                 monitor_size.add(vec2(20.0, 20.0)),
                                 Layout::centered_and_justified(egui::Direction::TopDown),
                                 |ui| {
-                                    let mut a =
+                                    let  a =
                                         ui.allocate_exact_size(selection.size(), Sense::click());
                                     ui.painter().image(texture.id(), a.0, uv, Color32::WHITE);
                                 },
                             );
-                            /*  let mut a =
-                                ui.allocate_at_least(space.size(), egui::Sense::click());
-                            a.0.set_center()
-                            /* ui.painter().image(texture.id(), a.0, uv, Color32::WHITE); */
-                            ui.painter().image(texture.id(), a.0, uv, Color32::WHITE); */
 
                             egui::Window::new("options")
                                 .anchor(egui::Align2::CENTER_TOP, [0.0, 0.0])
@@ -198,17 +162,6 @@ impl eframe::App for MyApp {
                                             self.button_position = a.min;
                                             self.crop = true;
                                             self.dimensions = egui::vec2(a.width(), a.height());
-
-/*                                             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(
-                                                Pos2::ZERO,
-                                            ));
-                                            ctx.send_viewport_cmd(ViewportCommand::Decorations(
-                                                false,
-                                            ));
-                                            ctx.send_viewport_cmd(ViewportCommand::InnerSize(
-                                                monitor_size,
-                                            )); */
-
                                             self.state = AppState::Crop;
                                         };
 
@@ -224,9 +177,9 @@ impl eframe::App for MyApp {
 
                 // Very little opacity for this frame, only to show area that its possible to capture
                 let semi_transparent_frame =
-                    egui::Frame::none().fill(Color32::WHITE.gamma_multiply(0.1));
+                    Frame::none().fill(Color32::WHITE.gamma_multiply(0.1));
 
-                egui::CentralPanel::default()
+                CentralPanel::default()
                     .frame(semi_transparent_frame)
                     .show(ctx, |ui| {
                         // Make pointer into crosshair if its hovering the selection area, if its on window pointer stays classic
@@ -249,8 +202,7 @@ impl eframe::App for MyApp {
                                 if ui.button("Full screen").clicked() {
                                     // Store full screen selection
                                     self.selected_area[0] = Pos2::ZERO;
-                                    self.selected_area[1] =
-                                        Pos2::new(monitor_size.x, monitor_size.y);
+                                    self.selected_area[1] = monitor_rect.right_bottom();
 
                                     //Go to Selection state
                                     self.state = AppState::Selection;
@@ -287,8 +239,8 @@ impl eframe::App for MyApp {
                 //reset option window in type of selection
                 self.area = false;
 
-                let transparent_frame = egui::Frame::none().fill(Color32::TRANSPARENT);
-                egui::CentralPanel::default()
+                let transparent_frame = Frame::none().fill(Color32::TRANSPARENT);
+                CentralPanel::default()
                     .frame(transparent_frame)
                     .show(ctx, |ui| {
                         //Make pointer into crosshair
@@ -365,63 +317,59 @@ impl eframe::App for MyApp {
                             self.state = AppState::MainApp;
                         }
                         if ui.button("CONFIRM").clicked() {
-                            println!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA{:?}", self.button_position);
-                            println!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA{:?}", self.button_position);
-                            self.selected_area[0] = Pos2::ZERO + vec2((self.min_pos_top.x- self.button_position.x) /self.shrink_factor , (self.min_pos_top.y- self.button_position.y )/self.shrink_factor);
+                            self.button_position.x = (self.button_position.x - self.display_rect.left_top().x) / self.shrink_factor;
+                            self.button_position.y = (self.button_position.y - self.display_rect.left_top().y) / self.shrink_factor;
+                            self.selected_area[0]= self.button_position;
+                            self.dimensions = self.dimensions.div(self.shrink_factor);
+                            self.selected_area[1] = self.selected_area[0].add(self.dimensions);
                             self.state = AppState::MainApp;
                         }
                     });
                 });
 
-
-
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    let mut p1 = pos2(self.selected_area[0].x/monitor_size.x, self.selected_area[0].y/monitor_size.y);
-                    let mut p2 = pos2(self.selected_area[1].x / monitor_size.x,self.selected_area[1].y / monitor_size.y);
-                    let av = egui::Rect::from_two_pos(p1,p2);
-                    egui::TopBottomPanel::top("top slide").show(ctx, |ui|{
-                       ui.add( egui::Slider::new(&mut p1.x, RangeInclusive::new(0.0, 1.0)));
-                    });
+                CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::both()
                         .auto_shrink(true)
                         .drag_to_scroll(true)
                         .show(ui, |ui| {
                             if let Some(texture) = self.texture.as_ref() {
-
                                 let uv = egui::Rect::from_two_pos(Pos2::ZERO, pos2(1., 1.));
 
-                                let monitor_rect = egui::Rect::from_two_pos(
-                                    Pos2::ZERO,
-                                    Pos2::new(monitor_size.x, monitor_size.y),
-                                );
-                               
-                                let avheight = ui.available_rect_before_wrap().height();
-                                let avwidth = avheight *  monitor_rect.aspect_ratio();
-                               
-                                let rect = Rect::from_center_size(ui.available_rect_before_wrap().center(), vec2(avwidth, avheight));
+                                let avheight =
+                                    ui.available_rect_before_wrap().shrink(60.0).height();
+                                let avwidth = avheight * monitor_rect.aspect_ratio();
 
-/*                                  if self.crop {                                    
-                                    self.shrink_factor=  avwidth / monitor_rect.width();
-                                    let selected_area = Rect::from_center_size(Pos2::ZERO, self.dimensions);
-                                    let new_w  = self.dimensions.x * self.shrink_factor;
-                                    let new_h = self.dimensions.x * self.shrink_factor / selected_area.aspect_ratio();
-                                    let new_x = self.button_position.x *self.shrink_factor;
+                                let rect = Rect::from_center_size(
+                                    ui.available_rect_before_wrap().center(),
+                                    vec2(avwidth, avheight),
+                                );
+
+                                if self.crop {
+                                    self.shrink_factor = avwidth / monitor_rect.width();
+                                    let selected_area =
+                                        Rect::from_center_size(Pos2::ZERO, self.dimensions);
+                                    let new_w = self.dimensions.x * self.shrink_factor;
+                                    let new_h = self.dimensions.x * self.shrink_factor
+                                        / selected_area.aspect_ratio();
+                                    let new_x = self.button_position.x * self.shrink_factor;
                                     let new_y = self.button_position.y * self.shrink_factor;
 
                                     self.min_pos_top = rect.left_top();
-                                    self.button_position = rect.left_top()+ vec2(new_x,new_y);
-                                    self.dimensions = vec2(new_w,new_h);
+                                    self.button_position = rect.left_top() + vec2(new_x, new_y); // new button = rect.left_top.x + original.x * self.shrink_factor
+                                    self.dimensions = vec2(new_w, new_h);
                                     self.display_rect = rect;
                                     self.crop = false;
-                                }  */                               
+
+
+                                    
+                                }
                                 ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
-                                ui.painter().rect_stroke(av, 0.0, Stroke::new(1.0, Color32::RED));
                             }
-                        }); 
+                        });
                 });
-                 
-                /* CentralPanel::default()
-                    .frame(egui::Frame::none().fill(Color32::TRANSPARENT))
+
+                CentralPanel::default()
+                    .frame(Frame::none().fill(Color32::TRANSPARENT))
                     .show(ctx, |ui| {
                         // Draw the button element
                         let pos = self.button_position.clone();
@@ -431,13 +379,13 @@ impl eframe::App for MyApp {
                             let rect = Rect::from_min_size(pos, dimensions);
                             ui.put(
                                 rect,
-                                Button::new("TEXT")
+                                Button::new("")
                                     .fill(Color32::TRANSPARENT)
                                     .sense(Sense::click()),
                             );
                         });
-                    }); */
-            } 
+                    });
+            }
         }
     }
 }
@@ -446,14 +394,13 @@ impl MyApp {
     pub fn drag(&mut self, ui: &mut Ui, id: Id, body: impl FnOnce(&mut Ui)) {
         let response = ui.scope(body).response;
         let response = ui.interact(response.rect, id, Sense::drag());
-        println!("{:?}", response.rect);
         let mut min = response.rect.right_bottom();
         min.x -= self.dimensions.x;
         min.y -= self.dimensions.y;
 
         let outline = Rect::from_min_size(min, self.dimensions);
 
-        let mut resize_frame = outline.shrink2(Vec2::new(16.0, 16.0));
+        let mut resize_frame = outline.shrink2(Vec2::new(8.0, 8.0));
         resize_frame.set_center(outline.center());
         let dx = Rect::from_two_pos(resize_frame.right_bottom(), outline.right_top());
         let top = Rect::from_two_pos(resize_frame.right_top(), outline.left_top());
@@ -461,39 +408,72 @@ impl MyApp {
         let sx = Rect::from_two_pos(resize_frame.left_top(), outline.left_bottom());
 
         ui.painter()
-            .rect_stroke(outline, 0.0, Stroke::new(3.0, Color32::RED));
-        ui.painter()
-        .rect_stroke(resize_frame, 0.0, Stroke::new(3.0, Color32::WHITE));
-        ui.painter()
-            .rect_filled(dx, 0.0, Color32::BLACK);
-        ui.painter()
-            .rect_stroke(top, 0.0, Stroke::new(3.0, Color32::TRANSPARENT));
-        ui.painter()
-            .rect_filled(down, 0.0, Color32::BLUE);
-        ui.painter()
-            .rect_stroke(sx, 0.0, Stroke::new(3.0, Color32::TRANSPARENT));
-
+            .rect_stroke(outline, 0.0, Stroke::new(3.0, Color32::WHITE));
         if response.hovered()
             && ui.rect_contains_pointer(outline)
             && !ui.rect_contains_pointer(resize_frame)
         {
-            println!("outline hovered");
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Crosshair);
         }
 
-         if response.dragged() && !self.resizing {
+        /* if response.dragged() && !self.resizing {
             println!("dragged not resizing");
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grabbing);
 
-            let new_button_position = self.button_position + response.drag_delta();
-            let bottom_left_corner = new_button_position + egui::vec2(0., self.dimensions.y);
-            let bottom_right_corner = new_button_position + self.dimensions;
-            let top_right_coner = new_button_position + egui::vec2(self.dimensions.x, 0.);
-            let d = egui::Rect::from_min_size(new_button_position, self.dimensions);
-            if self.display_rect.contains_rect(d) {
-                self.button_position = new_button_position;
-            } 
-        } 
+            let top_left_corner = self.button_position + response.drag_delta();
+            let bottom_left_corner = top_left_corner + egui::vec2(0., self.dimensions.y);
+            let bottom_right_corner = top_left_corner + self.dimensions;
+            let top_right_coner = top_left_corner + egui::vec2(self.dimensions.x, 0.);
+            let d = egui::Rect::from_min_size(top_left_corner, self.dimensions);
+
+            self.button_position = top_left_corner;
+
+
+            if !self.display_rect.contains_rect(d){
+            let a = [
+                self.display_rect.contains(top_left_corner),
+                self.display_rect.contains(top_right_coner),
+                self.display_rect.contains(bottom_left_corner),
+                self.display_rect.contains(bottom_right_corner),
+            ];
+            match a {
+                [true,true,true, false] => {
+                    self.button_position = self.display_rect.left_top();
+                },
+                [true,true,false, false] => {
+                    self.button_position.y = self.display_rect.left_top().y;
+                },
+                [true,true,false, true] => {
+                    self.button_position = self.display_rect.right_top();
+                    self.button_position.x -= self.dimensions.x;
+                },
+                [false,true,false, true] => {
+                    self.button_position.x = self.display_rect.right_top().x - self.dimensions.x;
+                },
+                [false,true,true, true] => {
+                    self.button_position = self.display_rect.right_bottom() - self.dimensions;
+                },
+                [false,false,true, true] => {
+                    self.button_position.y = self.display_rect.right_bottom().y -  self.dimensions.y;
+                },
+                [true,false,true, true] => {
+                    self.button_position = self.display_rect.left_bottom();
+                    self.button_position.y -= self.dimensions.y;
+                },
+                [true,false,true, false] => {
+                    self.button_position.x = self.display_rect.left_top().x;
+                },
+                [true,true,true, true] => {
+                    self.button_position = self.display_rect.center();
+                },
+                _=>{
+
+                }
+
+            }
+            }
+            
+        } */
         if response.drag_started()
             && ui.rect_contains_pointer(outline)
             && !ui.rect_contains_pointer(resize_frame)
@@ -507,23 +487,13 @@ impl MyApp {
             } else if ui.rect_contains_pointer(sx) {
                 self.frame = TouchedFrame::Left;
             }
-            println!("resizing true");
             self.resizing = true;
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::None);
         }
         if self.resizing && response.dragged() {
-            println!("resizing and dragged");
-            println!("drag y: {:?}", response.drag_delta().y);
-            println!("drag x: {:?}", response.drag_delta().x);
-            println!("{:?}", self.frame);
-            println!(
-                "outline {:?}, dimensions {:?}, button_position {:?}",
-                outline, self.dimensions, self.button_position
-            );
-            println!("rt {:?}", self.display_rect.right_top());
             match self.frame {
                 TouchedFrame::Top => {
-                    if !(self.dimensions.y - response.drag_delta().y < 50.0
+                    if !(self.dimensions.y - response.drag_delta().y < 15.0 
                         || self.button_position.y + response.drag_delta().y
                             < self.display_rect.left_top().y)
                     {
@@ -532,7 +502,7 @@ impl MyApp {
                     }
                 }
                 TouchedFrame::Bottom => {
-                    if !(self.dimensions.y + response.drag_delta().y < 50.0
+                    if !(self.dimensions.y + response.drag_delta().y < 15.0
                         || self.button_position.y + self.dimensions.y + response.drag_delta().y
                             > self.display_rect.right_bottom().y)
                     {
@@ -540,7 +510,7 @@ impl MyApp {
                     }
                 }
                 TouchedFrame::Right => {
-                    if !(self.dimensions.x + response.drag_delta().x < 50.0
+                    if !(self.dimensions.x + response.drag_delta().x < 15.0
                         || self.button_position.x + self.dimensions.x + response.drag_delta().x
                             > self.display_rect.right_top().x)
                     {
@@ -548,7 +518,7 @@ impl MyApp {
                     }
                 }
                 TouchedFrame::Left => {
-                    if !(self.dimensions.x - response.drag_delta().x < 50.0
+                    if !(self.dimensions.x - response.drag_delta().x < 15.0
                         || self.button_position.x + response.drag_delta().x
                             < self.display_rect.left_top().x)
                     {
@@ -560,7 +530,6 @@ impl MyApp {
             }
         }
         if response.drag_released() {
-            println!("released");
             self.resizing = false;
         }
     }
