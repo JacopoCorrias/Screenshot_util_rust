@@ -1,13 +1,15 @@
-use screenshots::Screen;
-use std::ops::{Add, Div};
-
 use eframe::{
     egui::{
         self, pos2, Button, CentralPanel, Frame, Id, Layout, Pos2, Rect, Sense, Ui, Vec2,
         ViewportCommand,
     },
-    epaint::{ vec2, Color32, Rgba, Rounding, Stroke}
+    epaint::{vec2, Color32, Rgba, Rounding, Stroke},
 };
+use image::{codecs::gif::GifEncoder, imageops};
+use rfd::FileDialog;
+use screenshots::Screen;
+use std::fs::{File, OpenOptions};
+use std::ops::{Add, Div};
 
 fn main() -> Result<(), eframe::Error> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -92,15 +94,12 @@ impl eframe::App for MyApp {
             AppState::MainApp => {
                 //Navbar
                 egui::TopBottomPanel::top("buttons navbar").show(ctx, |ui| {
-                    /*                     //Workaroud for borderless fullscreen transparency bug
-                    let monitor_size = monitor_size.add(Vec2::new(1.0, 1.0)); */
-
                     //Organize buttons in horizontal navbar
                     ui.horizontal(|ui| {
                         if ui.button("New capture").clicked() {
-                            // workaroud to borderless fullscreen render bug when transparent
                             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(Pos2::ZERO));
                             ctx.send_viewport_cmd(ViewportCommand::Decorations(false));
+                            //Workaroud for borderless fullscreen transparency bug
                             ctx.send_viewport_cmd(ViewportCommand::InnerSize(
                                 monitor_size.add(Vec2::new(1.0, 1.0)),
                             ));
@@ -117,29 +116,26 @@ impl eframe::App for MyApp {
                 CentralPanel::default().show(ctx, |ui| {
                     if let Some(texture) = self.texture.as_ref() {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                            let uv = egui::Rect::from_two_pos(
-                                Pos2::new(
-                                    self.selected_area[0].x / monitor_size.x,
-                                    self.selected_area[0].y / monitor_size.y,
-                                ),
-                                Pos2::new(
-                                    self.selected_area[1].x / monitor_size.x,
-                                    self.selected_area[1].y / monitor_size.y,
-                                ),
-                            );
-
-                            //selected is part of image to paint
                             let selection = egui::Rect::from_two_pos(
                                 self.selected_area[0],
                                 self.selected_area[1],
                             );
 
-
+                            let uv = egui::Rect::from_two_pos(
+                                Pos2::new(
+                                    selection.left_top().x / monitor_size.x,
+                                    selection.left_top().y / monitor_size.y,
+                                ),
+                                Pos2::new(
+                                    selection.right_bottom().x / monitor_size.x,
+                                    selection.right_bottom().y / monitor_size.y,
+                                ),
+                            );
                             ui.allocate_ui_with_layout(
                                 monitor_size.add(vec2(20.0, 20.0)),
                                 Layout::centered_and_justified(egui::Direction::TopDown),
                                 |ui| {
-                                    let  a =
+                                    let a =
                                         ui.allocate_exact_size(selection.size(), Sense::click());
                                     ui.painter().image(texture.id(), a.0, uv, Color32::WHITE);
                                 },
@@ -165,7 +161,75 @@ impl eframe::App for MyApp {
                                             self.state = AppState::Crop;
                                         };
 
-                                        if ui.button("Save").clicked() {};
+                                        if ui.button("Save").clicked() {
+                                            let files = FileDialog::new()
+                                                .add_filter("PNG", &["png"])
+                                                .add_filter("JPG", &["jpg"])
+                                                .add_filter("GIF", &["gif"])
+                                                .set_file_name("screenshot")
+                                                .set_directory("/")
+                                                .save_file();
+                                            let ext = files.clone();
+
+                                            if let Some(mut img) = self.image.clone() {
+                                                let shrink =
+                                                    monitor_rect.width() / img.width() as f32;
+                                                let top_left_x = (selection.left_top().x
+                                                    - Pos2::ZERO.x)
+                                                    / shrink;
+                                                let top_left_y = (selection.left_top().y
+                                                    - Pos2::ZERO.y)
+                                                    / shrink;
+                                                let width = selection.width() / shrink;
+                                                let height = selection.height() / shrink;
+
+                                                let img_crop = imageops::crop(
+                                                    &mut img,
+                                                    top_left_x as u32,
+                                                    top_left_y as u32,
+                                                    width as u32,
+                                                    height as u32,
+                                                );
+
+                                                let img = img_crop.to_image();
+                                                if let Some(save_path) = ext.as_ref() {
+                                                    if let Some(extension) = save_path.extension() {
+                                                        let extension_str = extension
+                                                            .to_string_lossy()
+                                                            .to_lowercase();
+                                                        match extension.to_str() {
+                                                            Some("jpg") | Some("jpeg")
+                                                            | Some("png") => {
+                                                                img.save(files.unwrap().as_path())
+                                                                    .unwrap();
+                                                            }
+                                                            Some("gif") => {
+                                                                let file = OpenOptions::new()
+                                                                    .create(true)
+                                                                    .read(true)
+                                                                    .write(true)
+                                                                    .open(save_path.as_path())
+                                                                    .unwrap();
+
+                                                                let frame = image::Frame::new(img);
+
+                                                                let mut encoder =
+                                                                    GifEncoder::new_with_speed(
+                                                                        file, 30,
+                                                                    );
+                                                                encoder
+                                                                    .encode_frame(frame)
+                                                                    .unwrap();
+                                                            }
+                                                            _ => println!(
+                                                                "Unsupported file extension: {}",
+                                                                extension_str
+                                                            ),
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        };
                                     });
                                 });
                         });
@@ -176,8 +240,7 @@ impl eframe::App for MyApp {
                 let pointer: egui::PointerState = ctx.input(|i| i.pointer.clone());
 
                 // Very little opacity for this frame, only to show area that its possible to capture
-                let semi_transparent_frame =
-                    Frame::none().fill(Color32::WHITE.gamma_multiply(0.1));
+                let semi_transparent_frame = Frame::none().fill(Color32::WHITE.gamma_multiply(0.1));
 
                 CentralPanel::default()
                     .frame(semi_transparent_frame)
@@ -200,10 +263,13 @@ impl eframe::App for MyApp {
                             //Organize buttons in horizontal line
                             ui.horizontal(|ui| {
                                 if ui.button("Full screen").clicked() {
+                                    let monitor_size: Vec2 =
+                                        ctx.input(|i| i.viewport().monitor_size.unwrap());
+                                    let monitor_rect =
+                                        Rect::from_min_size(Pos2::ZERO, monitor_size);
                                     // Store full screen selection
                                     self.selected_area[0] = Pos2::ZERO;
                                     self.selected_area[1] = monitor_rect.right_bottom();
-
                                     //Go to Selection state
                                     self.state = AppState::Selection;
 
@@ -291,7 +357,6 @@ impl eframe::App for MyApp {
                                 pixels: pixels,
                                 size: [image.width() as usize, image.height() as usize],
                             };
-
                             //Store texture of screenshot in MainApp
                             self.texture =
                                 Some(ui.ctx().load_texture("screenshot", img, Default::default()));
@@ -317,9 +382,13 @@ impl eframe::App for MyApp {
                             self.state = AppState::MainApp;
                         }
                         if ui.button("CONFIRM").clicked() {
-                            self.button_position.x = (self.button_position.x - self.display_rect.left_top().x) / self.shrink_factor;
-                            self.button_position.y = (self.button_position.y - self.display_rect.left_top().y) / self.shrink_factor;
-                            self.selected_area[0]= self.button_position;
+                            self.button_position.x = (self.button_position.x
+                                - self.display_rect.left_top().x)
+                                / self.shrink_factor;
+                            self.button_position.y = (self.button_position.y
+                                - self.display_rect.left_top().y)
+                                / self.shrink_factor;
+                            self.selected_area[0] = self.button_position;
                             self.dimensions = self.dimensions.div(self.shrink_factor);
                             self.selected_area[1] = self.selected_area[0].add(self.dimensions);
                             self.state = AppState::MainApp;
@@ -359,9 +428,6 @@ impl eframe::App for MyApp {
                                     self.dimensions = vec2(new_w, new_h);
                                     self.display_rect = rect;
                                     self.crop = false;
-
-
-                                    
                                 }
                                 ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
                             }
@@ -374,7 +440,6 @@ impl eframe::App for MyApp {
                         // Draw the button element
                         let pos = self.button_position.clone();
                         let dimensions = self.dimensions.clone();
-                        println!("{:?}", pos);
                         MyApp::drag(self, ui, ui.id(), |ui| {
                             let rect = Rect::from_min_size(pos, dimensions);
                             ui.put(
@@ -472,7 +537,7 @@ impl MyApp {
 
             }
             }
-            
+
         } */
         if response.drag_started()
             && ui.rect_contains_pointer(outline)
@@ -493,7 +558,7 @@ impl MyApp {
         if self.resizing && response.dragged() {
             match self.frame {
                 TouchedFrame::Top => {
-                    if !(self.dimensions.y - response.drag_delta().y < 15.0 
+                    if !(self.dimensions.y - response.drag_delta().y < 15.0
                         || self.button_position.y + response.drag_delta().y
                             < self.display_rect.left_top().y)
                     {
