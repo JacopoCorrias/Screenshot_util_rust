@@ -1,15 +1,17 @@
-use eframe::{
-    egui::{
-        self, pos2, Button, CentralPanel, Frame, Id, Layout, Pos2, Rect, Sense, Ui, Vec2,
-        ViewportCommand,
-    },
-    epaint::{vec2, Color32, Rgba, Rounding, Stroke},
+use eframe::egui::panel::TopBottomSide;
+use eframe::egui::{
+    self, pos2, Button, CentralPanel, Event, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers,
+    Pos2, Rect, Sense, Style, TopBottomPanel, Ui, Vec2, ViewportCommand,
 };
+use eframe::emath::Align;
+use eframe::epaint::{vec2, Color32, Rgba, Rounding, Stroke};
+use egui::text::LayoutJob;
 use image::{codecs::gif::GifEncoder, imageops};
 use rfd::FileDialog;
 use screenshots::Screen;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::ops::{Add, Div};
+use struct_iterable::Iterable;
 
 fn main() -> Result<(), eframe::Error> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -24,6 +26,49 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
     eframe::run_native("Screen", options, Box::new(|_cc| Box::<MyApp>::default()))
+}
+
+#[derive(Debug)]
+enum AppState {
+    MainApp,
+    NewCapture,
+    Selection,
+    Crop,
+    Settings,
+}
+impl Default for AppState {
+    fn default() -> Self {
+        AppState::MainApp
+    }
+}
+
+#[derive(Debug)]
+enum TouchedFrame {
+    None,
+    Bottom,
+    Top,
+    Right,
+    Left,
+}
+#[derive(Iterable)]
+struct KeyBindings {
+    save: egui::Key,
+    cancel: egui::Key,
+    new: egui::Key,
+    crop: egui::Key,
+    fullscreen: egui::Key,
+    // Add more actions as needed
+}
+impl Default for KeyBindings {
+    fn default() -> Self {
+        Self {
+            save: egui::Key::S,
+            cancel: egui::Key::Z,
+            new: egui::Key::N,
+            crop: egui::Key::X,
+            fullscreen: egui::Key::F,
+        }
+    }
 }
 
 struct MyApp {
@@ -41,20 +86,15 @@ struct MyApp {
     display_rect: Rect,
     shrink_factor: f32,
     min_pos_top: Pos2,
+    key_bindings: KeyBindings,
 }
-#[derive(Debug)]
-enum TouchedFrame {
-    None,
-    Bottom,
-    Top,
-    Right,
-    Left,
-}
+
 impl Default for MyApp {
     fn default() -> Self {
         Self {
+            key_bindings: KeyBindings::default(),
             state: AppState::MainApp,
-            button_position: Pos2::new(300., 300.),
+            button_position: Pos2::new(300.0, 300.0),
             dimensions: Vec2::new(100.0, 100.0),
             resizing: false,
             frame: TouchedFrame::None,
@@ -65,20 +105,9 @@ impl Default for MyApp {
             area: false,
             crop: false,
             display_rect: egui::Rect::ZERO,
-            shrink_factor: 0.,
+            shrink_factor: 0.0,
             min_pos_top: Pos2::ZERO,
         }
-    }
-}
-enum AppState {
-    MainApp,
-    NewCapture,
-    Selection,
-    Crop,
-}
-impl Default for AppState {
-    fn default() -> Self {
-        AppState::MainApp
     }
 }
 
@@ -88,6 +117,7 @@ impl eframe::App for MyApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.check_shortcut_press(ctx);
         let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
         let monitor_rect = Rect::from_min_size(Pos2::ZERO, monitor_size);
         match self.state {
@@ -109,12 +139,14 @@ impl eframe::App for MyApp {
                             ctx.send_viewport_cmd(ViewportCommand::Focus);
                             self.state = AppState::NewCapture;
                         }
-                        if ui.button("Settings").clicked() {}
+                        if ui.button("Settings").clicked() {
+                            self.state = AppState::Settings;
+                        }
                     });
                 });
 
                 CentralPanel::default().show(ctx, |ui| {
-                    if let Some(texture) = self.texture.as_ref() {
+                    if let Some(texture) = self.texture.clone() {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                             let selection = egui::Rect::from_two_pos(
                                 self.selected_area[0],
@@ -131,6 +163,7 @@ impl eframe::App for MyApp {
                                     selection.right_bottom().y / monitor_size.y,
                                 ),
                             );
+
                             ui.allocate_ui_with_layout(
                                 monitor_size.add(vec2(20.0, 20.0)),
                                 Layout::centered_and_justified(egui::Direction::TopDown),
@@ -159,77 +192,11 @@ impl eframe::App for MyApp {
                                             self.crop = true;
                                             self.dimensions = egui::vec2(a.width(), a.height());
                                             self.state = AppState::Crop;
-                                        };
+                                        }
 
                                         if ui.button("Save").clicked() {
-                                            let files = FileDialog::new()
-                                                .add_filter("PNG", &["png"])
-                                                .add_filter("JPG", &["jpg"])
-                                                .add_filter("GIF", &["gif"])
-                                                .set_file_name("screenshot")
-                                                .set_directory("/")
-                                                .save_file();
-                                            let ext = files.clone();
-
-                                            if let Some(mut img) = self.image.clone() {
-                                                let shrink =
-                                                    monitor_rect.width() / img.width() as f32;
-                                                let top_left_x = (selection.left_top().x
-                                                    - Pos2::ZERO.x)
-                                                    / shrink;
-                                                let top_left_y = (selection.left_top().y
-                                                    - Pos2::ZERO.y)
-                                                    / shrink;
-                                                let width = selection.width() / shrink;
-                                                let height = selection.height() / shrink;
-
-                                                let img_crop = imageops::crop(
-                                                    &mut img,
-                                                    top_left_x as u32,
-                                                    top_left_y as u32,
-                                                    width as u32,
-                                                    height as u32,
-                                                );
-
-                                                let img = img_crop.to_image();
-                                                if let Some(save_path) = ext.as_ref() {
-                                                    if let Some(extension) = save_path.extension() {
-                                                        let extension_str = extension
-                                                            .to_string_lossy()
-                                                            .to_lowercase();
-                                                        match extension.to_str() {
-                                                            Some("jpg") | Some("jpeg")
-                                                            | Some("png") => {
-                                                                img.save(files.unwrap().as_path())
-                                                                    .unwrap();
-                                                            }
-                                                            Some("gif") => {
-                                                                let file = OpenOptions::new()
-                                                                    .create(true)
-                                                                    .read(true)
-                                                                    .write(true)
-                                                                    .open(save_path.as_path())
-                                                                    .unwrap();
-
-                                                                let frame = image::Frame::new(img);
-
-                                                                let mut encoder =
-                                                                    GifEncoder::new_with_speed(
-                                                                        file, 30,
-                                                                    );
-                                                                encoder
-                                                                    .encode_frame(frame)
-                                                                    .unwrap();
-                                                            }
-                                                            _ => println!(
-                                                                "Unsupported file extension: {}",
-                                                                extension_str
-                                                            ),
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        };
+                                            self.save_capture(ctx);
+                                        }
                                     });
                                 });
                         });
@@ -278,11 +245,11 @@ impl eframe::App for MyApp {
 
                                     //Request repaint in order to wait until window is transparent
                                     ctx.request_repaint();
-                                };
+                                }
 
                                 if ui.button("Area").clicked() {
                                     self.area = true;
-                                };
+                                }
                             });
                             // Selection if button has been pressed, must do it this way otherwise button click is recorded as first point of selection
                             if pointer.primary_clicked() && !ui.ui_contains_pointer() {
@@ -313,7 +280,7 @@ impl eframe::App for MyApp {
                         if ui.ui_contains_pointer() {
                             ctx.output_mut(|o| {
                                 o.cursor_icon = egui::CursorIcon::Crosshair;
-                            })
+                            });
                         }
                         //Check for pointer changes
                         let pointer = ctx.input(|i| i.pointer.clone());
@@ -402,7 +369,7 @@ impl eframe::App for MyApp {
                         .drag_to_scroll(true)
                         .show(ui, |ui| {
                             if let Some(texture) = self.texture.as_ref() {
-                                let uv = egui::Rect::from_two_pos(Pos2::ZERO, pos2(1., 1.));
+                                let uv = egui::Rect::from_two_pos(Pos2::ZERO, pos2(1.0, 1.0));
 
                                 let avheight =
                                     ui.available_rect_before_wrap().shrink(60.0).height();
@@ -412,13 +379,16 @@ impl eframe::App for MyApp {
                                     ui.available_rect_before_wrap().center(),
                                     vec2(avwidth, avheight),
                                 );
-
+                                println!(
+                                    "uv: {:?}, avheight: {:?}, avwidth: {:?}, rect: {:?}",
+                                    uv, avheight, avwidth, rect
+                                );
                                 if self.crop {
                                     self.shrink_factor = avwidth / monitor_rect.width();
                                     let selected_area =
                                         Rect::from_center_size(Pos2::ZERO, self.dimensions);
                                     let new_w = self.dimensions.x * self.shrink_factor;
-                                    let new_h = self.dimensions.x * self.shrink_factor
+                                    let new_h = (self.dimensions.x * self.shrink_factor)
                                         / selected_area.aspect_ratio();
                                     let new_x = self.button_position.x * self.shrink_factor;
                                     let new_y = self.button_position.y * self.shrink_factor;
@@ -451,11 +421,203 @@ impl eframe::App for MyApp {
                         });
                     });
             }
+            AppState::Settings => {
+                TopBottomPanel::new(TopBottomSide::Top, "back").show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        // Add a heading with text "Settings" (big)
+
+                        ui.heading(egui::RichText::new("Settings: ").size(30.0));
+                        // Add a button on the right corner
+                        ui.add_space(ui.available_size().x - 0.0);
+
+                        if ui.button("Go back").clicked() {
+                            self.state = AppState::Selection;
+                        }
+                    });
+                });
+                CentralPanel::default().show(ctx, |ui| {
+                    ui.label(
+                        "Modify keybidings by hovering on key you want to modify and pressing new desidered key on keyboard"
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("New fullscreen capture: ");
+                        ui.add_enabled(false, Button::new("Ctrl"));
+                        ui.label("+");
+                        if ui.button(format!("{:?}", self.key_bindings.fullscreen)).hovered() {
+                            ui.input(|i| {
+                                for key in Key::ALL {
+                                    if
+                                        i.key_pressed(key.to_owned()) &&
+                                        !self.is_key_assigned(key.to_owned())
+                                    {
+                                        self.key_bindings.fullscreen = key.to_owned();
+                                    }
+                                }
+                            })
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("New capture: ");
+                        ui.add_enabled(false, Button::new("Ctrl"));
+                        ui.label("+");
+                        if ui.button(format!("{:?}", self.key_bindings.new)).hovered() {
+                            ui.input(|i| {
+                                for key in Key::ALL {
+                                    if
+                                        i.key_pressed(key.to_owned()) &&
+                                        !self.is_key_assigned(key.to_owned())
+                                    {
+                                        self.key_bindings.new = key.to_owned();
+                                    } else {
+                                    }
+                                }
+                            })
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Save capture: ");
+                        ui.add_enabled(false, Button::new("Ctrl"));
+                        ui.label("+");
+                        if ui.button(format!("{:?}", self.key_bindings.save)).hovered() {
+                            ui.input(|i| {
+                                for key in Key::ALL {
+                                    if
+                                        i.key_pressed(key.to_owned()) &&
+                                        !self.is_key_assigned(key.to_owned())
+                                    {
+                                        self.key_bindings.save = key.to_owned();
+                                    }
+                                }
+                            })
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Cancel cropping: ");
+                        ui.add_enabled(false, Button::new("Ctrl"));
+                        ui.label("+");
+                        if ui.button(format!("{:?}", self.key_bindings.cancel)).hovered() {
+                            let input = ui.input(|i| i.clone());
+                            for key in Key::ALL {
+                                if
+                                    input.key_pressed(key.to_owned()) &&
+                                    !self.is_key_assigned(key.to_owned())
+                                {
+                                    self.key_bindings.cancel = key.to_owned();
+                                }
+                            }
+                        }
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Resize crop: ");
+                        ui.add_enabled(false, Button::new("Ctrl"));
+                        ui.label("+");
+                        if ui.button(format!("{:?}", self.key_bindings.crop)).hovered() {
+                            ui.input(|i| {
+                                for key in Key::ALL {
+                                    if
+                                        i.key_pressed(key.to_owned()) &&
+                                        !self.is_key_assigned(key.to_owned())
+                                    {
+                                        self.key_bindings.crop = key.to_owned();
+                                    }
+                                }
+                            })
+                        }
+                    });
+                });
+            }
         }
     }
 }
 
 impl MyApp {
+    fn check_shortcut_press(&self, ctx: &egui::Context) {
+        let input = ctx.input(|i| i.clone());
+        input.events.iter().for_each(|event| {
+            println!("{:?}", event);
+            println!("{:?}", self.key_bindings.save);
+            match event.to_owned() {
+                Event::Key {
+                    key,
+                    physical_key,
+                    pressed,
+                    repeat,
+                    modifiers,
+                } => {
+                    if key == self.key_bindings.save && modifiers.ctrl && !repeat && pressed {
+                        self.save_capture(ctx);
+                    }
+                }
+                _ => {}
+            }
+        });
+    }
+    fn is_key_assigned(&self, key: Key) -> bool {
+        // Check if the key is already assigned to any action
+        self.key_bindings.fullscreen == key
+            || self.key_bindings.new == key
+            || self.key_bindings.save == key
+            || self.key_bindings.cancel == key
+            || self.key_bindings.crop == key
+    }
+    fn save_capture(&self, ctx: &egui::Context) {
+        if let Some(texture) = self.texture.clone() {
+            let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
+            let monitor_rect = Rect::from_min_size(Pos2::ZERO, monitor_size);
+            let selection = egui::Rect::from_two_pos(self.selected_area[0], self.selected_area[1]);
+            let files = FileDialog::new()
+                .add_filter("PNG", &["png"])
+                .add_filter("JPG", &["jpg"])
+                .add_filter("GIF", &["gif"])
+                .set_file_name("screenshot")
+                .set_directory("/")
+                .save_file();
+            let ext = files.clone();
+            if let Some(mut img) = self.image.clone() {
+                let shrink = monitor_rect.width() / (img.width() as f32);
+                let top_left_x = (selection.left_top().x - Pos2::ZERO.x) / shrink;
+                let top_left_y = (selection.left_top().y - Pos2::ZERO.y) / shrink;
+                let width = selection.width() / shrink;
+                let height = selection.height() / shrink;
+
+                let img_crop = imageops::crop(
+                    &mut img,
+                    top_left_x as u32,
+                    top_left_y as u32,
+                    width as u32,
+                    height as u32,
+                );
+
+                let img = img_crop.to_image();
+                if let Some(save_path) = ext.as_ref() {
+                    if let Some(extension) = save_path.extension() {
+                        let extension_str = extension.to_string_lossy().to_lowercase();
+                        match extension.to_str() {
+                            Some("jpg") | Some("jpeg") | Some("png") => {
+                                img.save(files.unwrap().as_path()).unwrap();
+                            }
+                            Some("gif") => {
+                                let file = OpenOptions::new()
+                                    .create(true)
+                                    .read(true)
+                                    .write(true)
+                                    .open(save_path.as_path())
+                                    .unwrap();
+
+                                let frame = image::Frame::new(img);
+
+                                let mut encoder = GifEncoder::new_with_speed(file, 30);
+                                encoder.encode_frame(frame).unwrap();
+                            }
+                            _ => println!("Unsupported file extension: {}", extension_str),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn drag(&mut self, ui: &mut Ui, id: Id, body: impl FnOnce(&mut Ui)) {
         let response = ui.scope(body).response;
         let response = ui.interact(response.rect, id, Sense::drag());
@@ -478,67 +640,10 @@ impl MyApp {
             && ui.rect_contains_pointer(outline)
             && !ui.rect_contains_pointer(resize_frame)
         {
-            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Crosshair);
+            ui.output_mut(|o| {
+                o.cursor_icon = egui::CursorIcon::Crosshair;
+            });
         }
-
-        /* if response.dragged() && !self.resizing {
-            println!("dragged not resizing");
-            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grabbing);
-
-            let top_left_corner = self.button_position + response.drag_delta();
-            let bottom_left_corner = top_left_corner + egui::vec2(0., self.dimensions.y);
-            let bottom_right_corner = top_left_corner + self.dimensions;
-            let top_right_coner = top_left_corner + egui::vec2(self.dimensions.x, 0.);
-            let d = egui::Rect::from_min_size(top_left_corner, self.dimensions);
-
-            self.button_position = top_left_corner;
-
-
-            if !self.display_rect.contains_rect(d){
-            let a = [
-                self.display_rect.contains(top_left_corner),
-                self.display_rect.contains(top_right_coner),
-                self.display_rect.contains(bottom_left_corner),
-                self.display_rect.contains(bottom_right_corner),
-            ];
-            match a {
-                [true,true,true, false] => {
-                    self.button_position = self.display_rect.left_top();
-                },
-                [true,true,false, false] => {
-                    self.button_position.y = self.display_rect.left_top().y;
-                },
-                [true,true,false, true] => {
-                    self.button_position = self.display_rect.right_top();
-                    self.button_position.x -= self.dimensions.x;
-                },
-                [false,true,false, true] => {
-                    self.button_position.x = self.display_rect.right_top().x - self.dimensions.x;
-                },
-                [false,true,true, true] => {
-                    self.button_position = self.display_rect.right_bottom() - self.dimensions;
-                },
-                [false,false,true, true] => {
-                    self.button_position.y = self.display_rect.right_bottom().y -  self.dimensions.y;
-                },
-                [true,false,true, true] => {
-                    self.button_position = self.display_rect.left_bottom();
-                    self.button_position.y -= self.dimensions.y;
-                },
-                [true,false,true, false] => {
-                    self.button_position.x = self.display_rect.left_top().x;
-                },
-                [true,true,true, true] => {
-                    self.button_position = self.display_rect.center();
-                },
-                _=>{
-
-                }
-
-            }
-            }
-
-        } */
         if response.drag_started()
             && ui.rect_contains_pointer(outline)
             && !ui.rect_contains_pointer(resize_frame)
@@ -553,7 +658,9 @@ impl MyApp {
                 self.frame = TouchedFrame::Left;
             }
             self.resizing = true;
-            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::None);
+            ui.output_mut(|o| {
+                o.cursor_icon = egui::CursorIcon::None;
+            });
         }
         if self.resizing && response.dragged() {
             match self.frame {
