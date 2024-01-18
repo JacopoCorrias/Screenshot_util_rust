@@ -1,4 +1,3 @@
-use arboard::ImageData;
 use eframe::egui::panel::TopBottomSide;
 use eframe::egui::{
     self, pos2, Button, CentralPanel, Event, Frame, Id, Key, Pos2, Rect, Sense, TopBottomPanel, Ui,
@@ -12,7 +11,6 @@ use std::borrow::Cow;
 
 use std::fs::OpenOptions;
 use std::ops::{Add, Div};
-use struct_iterable::Iterable;
 
 fn main() -> Result<(), eframe::Error> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -55,7 +53,6 @@ enum TouchedFrame {
     Right,
     Left,
 }
-#[derive(Iterable)]
 struct KeyBindings {
     save: egui::Key,
     cancel: egui::Key,
