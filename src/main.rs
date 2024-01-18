@@ -8,6 +8,7 @@ use image::{codecs::gif::GifEncoder, imageops};
 use rfd::FileDialog;
 use screenshots::Screen;
 use std::borrow::Cow;
+use std::{thread, time};
 
 use std::fs::OpenOptions;
 use std::ops::{Add, Div};
@@ -90,6 +91,7 @@ struct MyApp {
     shrink_factor: f32,
     min_pos_top: Pos2,
     key_bindings: KeyBindings,
+    delay: u64,
 }
 
 impl Default for MyApp {
@@ -110,6 +112,7 @@ impl Default for MyApp {
             display_rect: egui::Rect::ZERO,
             shrink_factor: 0.0,
             min_pos_top: Pos2::ZERO,
+            delay: 0,
         }
     }
 }
@@ -130,11 +133,26 @@ impl eframe::App for MyApp {
                     //Organize buttons in horizontal navbar
                     ui.horizontal(|ui| {
                         if ui.button("New capture").clicked() {
+                            self.delay = 0;
                             self.set_new_capture_window(ctx);
                             self.state = AppState::NewCapture;
                         }
+                        ui.add_space(20.);
+
+                        if ui.button("Nuova cattura con delay: ").clicked() {
+                            self.set_new_capture_window(ctx);
+                            if self.delay==0{
+                                self.state = AppState::NewCapture;
+                            }
+                          else {  ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+                            ctx.request_repaint();
+                            self.state = AppState::Selection;}
+                        }
+                        ui.add(egui::Slider::new(&mut self.delay, 0..=60).text("seconds"));
+                        
                         ui.add_space(ui.available_size().x - 50.0);
                         if ui.button("Settings").clicked() {
+                            self.delay = 0;
                             self.state = AppState::Settings;
                         }
                     });
@@ -232,6 +250,12 @@ impl eframe::App for MyApp {
                 CentralPanel::default()
                     .frame(transparent_frame)
                     .show(ctx, |ui| {
+                        if self.delay > 0 {
+                            thread::sleep(time::Duration::from_secs(self.delay));
+                            self.delay = 0;
+                            ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                            self.state = AppState::NewCapture;
+                        }
                         //Make pointer into crosshair
                         if ui.ui_contains_pointer() {
                             ctx.output_mut(|o| {
@@ -589,13 +613,16 @@ impl MyApp {
                         && pressed
                         && matches!(self.state, AppState::Crop)
                     {
+                        self.delay =0;
                         self.state = AppState::MainApp;
+
                     } else if key == self.key_bindings.fullscreen
                         && modifiers.ctrl
                         && !repeat
                         && pressed
                         && matches!(self.state, AppState::MainApp)
-                    {
+                    {       
+                        self.delay = 0;
                         self.set_new_capture_window(ctx);
                         self.handle_fullscreen_capture(ctx);
                     } else if key == self.key_bindings.new
@@ -604,6 +631,7 @@ impl MyApp {
                         && pressed
                         && matches!(self.state, AppState::MainApp)
                     {
+                        self.delay = 0;
                         self.set_new_capture_window(ctx);
                         self.area = true;
                         self.state = AppState::NewCapture;
@@ -612,12 +640,14 @@ impl MyApp {
                         && !repeat
                         && matches!(self.state, AppState::MainApp)
                     {
+                        self.delay = 0;
                         self.handle_crop_request(ctx);
                     } else if key == self.key_bindings.clipboard
                         && modifiers.ctrl
                         && !repeat
                         && matches!(self.state, AppState::MainApp)
                     {
+                        self.delay = 0;
                         self.copy_to_clipboard(ctx);
                     }
                 }
@@ -748,7 +778,7 @@ impl MyApp {
                 o.cursor_icon = egui::CursorIcon::Grab;
             });
         }
-        
+
         if response.drag_started()
             && ui.rect_contains_pointer(outline)
             && !ui.rect_contains_pointer(resize_frame)
