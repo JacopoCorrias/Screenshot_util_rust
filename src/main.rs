@@ -62,7 +62,7 @@ struct KeyBindings {
     new: egui::Key,
     crop: egui::Key,
     fullscreen: egui::Key,
-    // Add more actions as needed
+    clipboard: egui::Key,
 }
 impl Default for KeyBindings {
     fn default() -> Self {
@@ -72,6 +72,7 @@ impl Default for KeyBindings {
             new: egui::Key::N,
             crop: egui::Key::X,
             fullscreen: egui::Key::F,
+            clipboard: egui::Key::C,
         }
     }
 }
@@ -475,6 +476,22 @@ impl eframe::App for MyApp {
                             })
                         }
                     });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Copy image to clipboard: ");
+                        ui.add_enabled(false, Button::new("Ctrl"));
+                        ui.label("+");
+                        if ui.button(format!("{:?}", self.key_bindings.clipboard)).hovered() {
+                            ui.input(|i| {
+                                for key in Key::ALL {
+                                    if i.key_pressed(key.to_owned()) && !self.is_key_assigned(key.to_owned())
+                                    {
+                                        self.key_bindings.clipboard = key.to_owned();
+                                    }
+                                }
+                            })
+                        }
+                    });
                 });
             }
         }
@@ -482,18 +499,18 @@ impl eframe::App for MyApp {
 }
 
 impl MyApp {
-    fn copy_to_clipboard(&self,ctx: &egui::Context) {
-        let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> = self.crop_image(ctx);
-        let a = img.clone().into_raw();
-
-        let img_to_save = arboard::ImageData {
-            width: img.width()as usize,
-            height: img.height() as usize,
-            bytes: Cow::from(a)
-        };
-        let mut clipboard = arboard::Clipboard::new().unwrap();
-        clipboard.set_image(img_to_save).unwrap();
-
+    fn copy_to_clipboard(&self, ctx: &egui::Context) {
+        if let Some(_texture) = self.texture.clone() {
+            let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> = self.crop_image(ctx);
+            let a = img.clone().into_raw();
+            let img_to_save = arboard::ImageData {
+                width: img.width() as usize,
+                height: img.height() as usize,
+                bytes: Cow::from(a),
+            };
+            let mut clipboard = arboard::Clipboard::new().unwrap();
+            clipboard.set_image(img_to_save).unwrap();
+        }
     }
     //------ Calculates dimensions, center of rectangle where image is going to rendered
     fn calculate_space(&self, ctx: &egui::Context, ui: &mut Ui) -> Rect {
@@ -599,6 +616,12 @@ impl MyApp {
                         && matches!(self.state, AppState::MainApp)
                     {
                         self.handle_crop_request(ctx);
+                    } else if key == self.key_bindings.clipboard
+                        && modifiers.ctrl
+                        && !repeat
+                        && matches!(self.state, AppState::MainApp)
+                    {
+                        self.copy_to_clipboard(ctx);
                     }
                 }
                 _ => {}
@@ -663,10 +686,6 @@ impl MyApp {
             return;
         }
         if let Some(_texture) = self.texture.clone() {
-/*             let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
-            let monitor_rect = Rect::from_min_size(Pos2::ZERO, monitor_size);
-            let selection = egui::Rect::from_two_pos(self.selected_area[0], self.selected_area[1]); */
-
             let files = FileDialog::new()
                 .add_filter("PNG", &["png"])
                 .add_filter("JPG", &["jpg"])
@@ -677,24 +696,7 @@ impl MyApp {
             let ext = files.clone();
 
             if let Some(mut _img) = self.image.clone() {
-/*                 let shrink = monitor_rect.width() / (img.width() as f32);
-                let top_left_x = (selection.left_top().x - Pos2::ZERO.x) / shrink;
-                let top_left_y = (selection.left_top().y - Pos2::ZERO.y) / shrink;
-                let width = selection.width() / shrink;
-                let height = selection.height() / shrink;
-
-                let img_crop = imageops::crop(
-                    &mut img,
-                    top_left_x as u32,
-                    top_left_y as u32,
-                    width as u32,
-                    height as u32,
-                );
-
-                let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> = img_crop.to_image(); */
-
                 let img = self.crop_image(ctx);
-                
                 if let Some(save_path) = ext.as_ref() {
                     if let Some(extension) = save_path.extension() {
                         let extension_str = extension.to_string_lossy().to_lowercase();
@@ -732,7 +734,7 @@ impl MyApp {
 
         let outline = Rect::from_min_size(min, self.dimensions);
 
-        let mut resize_frame = outline.shrink2(Vec2::new(16.0, 16.0));
+        let mut resize_frame = outline.shrink2(Vec2::new(5.0, 5.0));
         resize_frame.set_center(outline.center());
         let dx = Rect::from_two_pos(resize_frame.right_bottom(), outline.right_top());
         let top = Rect::from_two_pos(resize_frame.right_top(), outline.left_top());
@@ -749,6 +751,7 @@ impl MyApp {
                 o.cursor_icon = egui::CursorIcon::Grab;
             });
         }
+        
         if response.drag_started()
             && ui.rect_contains_pointer(outline)
             && !ui.rect_contains_pointer(resize_frame)
@@ -767,7 +770,7 @@ impl MyApp {
         if self.resizing && response.dragged() {
             match self.frame {
                 TouchedFrame::Top => {
-                    if !(self.dimensions.y - response.drag_delta().y < 15.0
+                    if !(self.dimensions.y - response.drag_delta().y < 25.0
                         || self.button_position.y + response.drag_delta().y
                             < self.display_rect.left_top().y)
                     {
@@ -779,7 +782,7 @@ impl MyApp {
                     }
                 }
                 TouchedFrame::Bottom => {
-                    if !(self.dimensions.y + response.drag_delta().y < 15.0
+                    if !(self.dimensions.y + response.drag_delta().y < 25.0
                         || self.button_position.y + self.dimensions.y + response.drag_delta().y
                             > self.display_rect.right_bottom().y)
                     {
@@ -790,7 +793,7 @@ impl MyApp {
                     }
                 }
                 TouchedFrame::Right => {
-                    if !(self.dimensions.x + response.drag_delta().x < 15.0
+                    if !(self.dimensions.x + response.drag_delta().x < 25.0
                         || self.button_position.x + self.dimensions.x + response.drag_delta().x
                             > self.display_rect.right_top().x)
                     {
@@ -801,7 +804,7 @@ impl MyApp {
                     }
                 }
                 TouchedFrame::Left => {
-                    if !(self.dimensions.x - response.drag_delta().x < 15.0
+                    if !(self.dimensions.x - response.drag_delta().x < 25.0
                         || self.button_position.x + response.drag_delta().x
                             < self.display_rect.left_top().x)
                     {
