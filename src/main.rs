@@ -1,3 +1,4 @@
+use arboard::ImageData;
 use eframe::egui::panel::TopBottomSide;
 use eframe::egui::{
     self, pos2, Button, CentralPanel, Event, Frame, Id, Key, Pos2, Rect, Sense, TopBottomPanel, Ui,
@@ -7,6 +8,8 @@ use eframe::epaint::{vec2, Color32, Rgba, Rounding, Stroke};
 use image::{codecs::gif::GifEncoder, imageops};
 use rfd::FileDialog;
 use screenshots::Screen;
+use std::borrow::Cow;
+
 use std::fs::OpenOptions;
 use std::ops::{Add, Div};
 use struct_iterable::Iterable;
@@ -138,39 +141,15 @@ impl eframe::App for MyApp {
                         }
                     });
                 });
-
                 CentralPanel::default().show(ctx, |ui| {
                     if let Some(texture) = self.texture.clone() {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-/*                             let selection = egui::Rect::from_two_pos(
-                                self.selected_area[0],
-                                self.selected_area[1],
-                            ); */
+                            //IMAGE RENDERING
                             let uv = self.calculate_uv(ctx);
-/*                             //space is where image is going to be rendered
-                            let center = Pos2::new(monitor_size.x / 2.0, monitor_size.y / 2.0);
-                            let mut space = egui::Rect::from_center_size(center, selection.size());
-
-                            //Modify space in order to render image clearly and not stretched
-                            if !ui.available_rect_before_wrap().contains_rect(space) {
-                                let available_width = ui.available_rect_before_wrap().width();
-                                let available_height = ui.available_rect_before_wrap().height();
-                                let aspect_ratio = selection.aspect_ratio();
-                                let new_width = available_height * aspect_ratio;
-                                if new_width <= available_width {
-                                    ui.set_width(new_width);
-                                    space = ui.available_rect_before_wrap();
-                                    space.set_center(Pos2::new(center.x, space.center().y));
-                                } else {
-                                    let new_height = available_width / aspect_ratio;
-                                    ui.set_height(new_height);
-                                    space = ui.available_rect_before_wrap();
-                                    space.set_center(Pos2::new(space.center().x, center.y));
-                                }
-                            } */
                             let space = self.calculate_space(ctx, ui);
                             ui.painter().image(texture.id(), space, uv, Color32::WHITE);
 
+                            //OPTIONS
                             egui::Window::new("options")
                                 .anchor(egui::Align2::CENTER_TOP, [0.0, 0.0])
                                 .collapsible(false)
@@ -184,6 +163,9 @@ impl eframe::App for MyApp {
 
                                         if ui.button("Save").clicked() {
                                             self.save_capture(ctx);
+                                        }
+                                        if ui.button("Copy to clipboard").clicked() {
+                                            self.copy_to_clipboard(ctx);
                                         }
                                     });
                                 });
@@ -353,15 +335,14 @@ impl eframe::App for MyApp {
                         .show(ui, |ui| {
                             if let Some(texture) = self.texture.as_ref() {
                                 let uv = egui::Rect::from_two_pos(Pos2::ZERO, pos2(1.0, 1.0));
-
                                 let avheight =
                                     ui.available_rect_before_wrap().shrink(60.0).height();
                                 let avwidth = avheight * monitor_rect.aspect_ratio();
-
                                 let rect = Rect::from_center_size(
                                     ui.available_rect_before_wrap().center(),
                                     vec2(avwidth, avheight),
                                 );
+
                                 if self.crop {
                                     self.shrink_factor = avwidth / monitor_rect.width();
                                     let selected_area =
@@ -378,6 +359,7 @@ impl eframe::App for MyApp {
                                     self.display_rect = rect;
                                     self.crop = false;
                                 }
+
                                 ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
                             }
                         });
@@ -424,9 +406,7 @@ impl eframe::App for MyApp {
                         if ui.button(format!("{:?}", self.key_bindings.fullscreen)).hovered() {
                             ui.input(|i| {
                                 for key in Key::ALL {
-                                    if
-                                        i.key_pressed(key.to_owned()) &&
-                                        !self.is_key_assigned(key.to_owned())
+                                    if  i.key_pressed(key.to_owned()) && !self.is_key_assigned(key.to_owned())
                                     {
                                         self.key_bindings.fullscreen = key.to_owned();
                                     }
@@ -441,12 +421,9 @@ impl eframe::App for MyApp {
                         if ui.button(format!("{:?}", self.key_bindings.new)).hovered() {
                             ui.input(|i| {
                                 for key in Key::ALL {
-                                    if
-                                        i.key_pressed(key.to_owned()) &&
-                                        !self.is_key_assigned(key.to_owned())
+                                    if i.key_pressed(key.to_owned()) && !self.is_key_assigned(key.to_owned())
                                     {
                                         self.key_bindings.new = key.to_owned();
-                                    } else {
                                     }
                                 }
                             })
@@ -459,9 +436,7 @@ impl eframe::App for MyApp {
                         if ui.button(format!("{:?}", self.key_bindings.save)).hovered() {
                             ui.input(|i| {
                                 for key in Key::ALL {
-                                    if
-                                        i.key_pressed(key.to_owned()) &&
-                                        !self.is_key_assigned(key.to_owned())
+                                    if i.key_pressed(key.to_owned()) && !self.is_key_assigned(key.to_owned())
                                     {
                                         self.key_bindings.save = key.to_owned();
                                     }
@@ -477,8 +452,7 @@ impl eframe::App for MyApp {
                             let input = ui.input(|i| i.clone());
                             for key in Key::ALL {
                                 if
-                                    input.key_pressed(key.to_owned()) &&
-                                    !self.is_key_assigned(key.to_owned())
+                                    input.key_pressed(key.to_owned()) && !self.is_key_assigned(key.to_owned())
                                 {
                                     self.key_bindings.cancel = key.to_owned();
                                 }
@@ -493,9 +467,7 @@ impl eframe::App for MyApp {
                         if ui.button(format!("{:?}", self.key_bindings.crop)).hovered() {
                             ui.input(|i| {
                                 for key in Key::ALL {
-                                    if
-                                        i.key_pressed(key.to_owned()) &&
-                                        !self.is_key_assigned(key.to_owned())
+                                    if i.key_pressed(key.to_owned()) && !self.is_key_assigned(key.to_owned())
                                     {
                                         self.key_bindings.crop = key.to_owned();
                                     }
@@ -510,6 +482,20 @@ impl eframe::App for MyApp {
 }
 
 impl MyApp {
+    fn copy_to_clipboard(&self,ctx: &egui::Context) {
+        let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> = self.crop_image(ctx);
+        let a = img.clone().into_raw();
+
+        let img_to_save = arboard::ImageData {
+            width: img.width()as usize,
+            height: img.height() as usize,
+            bytes: Cow::from(a)
+        };
+        let mut clipboard = arboard::Clipboard::new().unwrap();
+        clipboard.set_image(img_to_save).unwrap();
+
+    }
+    //------ Calculates dimensions, center of rectangle where image is going to rendered
     fn calculate_space(&self, ctx: &egui::Context, ui: &mut Ui) -> Rect {
         let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
         let selection = egui::Rect::from_two_pos(self.selected_area[0], self.selected_area[1]);
@@ -535,6 +521,8 @@ impl MyApp {
         }
         return space;
     }
+
+    //-----Calculates area of image to render, aka part of image selected by user
     fn calculate_uv(&self, ctx: &egui::Context) -> Rect {
         let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
 
@@ -552,6 +540,7 @@ impl MyApp {
         );
         return uv;
     }
+    //------Sets the window to optimal configuration for screen capture
     fn set_new_capture_window(&mut self, ctx: &egui::Context) {
         let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(Pos2::ZERO));
@@ -564,6 +553,7 @@ impl MyApp {
         )); */
         ctx.send_viewport_cmd(ViewportCommand::Focus);
     }
+    //------Checks if any shortcut has been pressed
     fn check_shortcut_press(&mut self, ctx: &egui::Context) {
         let input = ctx.input(|i| i.clone());
         input
@@ -614,18 +604,18 @@ impl MyApp {
                 _ => {}
             });
     }
+    //------- Checks if the given key is currently assigned to any keybind
     fn is_key_assigned(&self, key: Key) -> bool {
-        // Check if the key is already assigned to any actionf
         self.key_bindings.fullscreen == key
             || self.key_bindings.new == key
             || self.key_bindings.save == key
             || self.key_bindings.cancel == key
             || self.key_bindings.crop == key
     }
+    //--------
     fn handle_crop_request(&mut self, _ctx: &egui::Context) {
         if let Some(_texture) = self.texture.clone() {
             let a = egui::Rect::from_two_pos(self.selected_area[0], self.selected_area[1]);
-
             self.button_position = a.min;
             self.crop = true;
             self.dimensions = egui::vec2(a.width(), a.height());
@@ -647,14 +637,36 @@ impl MyApp {
         //Request repaint in order to wait until window is transparent
         ctx.request_repaint();
     }
+    fn crop_image(&self, ctx: &egui::Context) -> image::ImageBuffer<image::Rgba<u8>, Vec<u8>> {
+        let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
+        let monitor_rect = Rect::from_min_size(Pos2::ZERO, monitor_size);
+        let selection = egui::Rect::from_two_pos(self.selected_area[0], self.selected_area[1]);
+        let mut img = self.image.clone().unwrap();
+        let shrink = monitor_rect.width() / (img.width() as f32);
+        let top_left_x = (selection.left_top().x - Pos2::ZERO.x) / shrink;
+        let top_left_y = (selection.left_top().y - Pos2::ZERO.y) / shrink;
+        let width = selection.width() / shrink;
+        let height = selection.height() / shrink;
+
+        let img_crop = imageops::crop(
+            &mut img,
+            top_left_x as u32,
+            top_left_y as u32,
+            width as u32,
+            height as u32,
+        );
+
+        img_crop.to_image()
+    }
     fn save_capture(&self, ctx: &egui::Context) {
         if !matches!(self.state, AppState::MainApp) {
             return;
         }
         if let Some(_texture) = self.texture.clone() {
-            let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
+/*             let monitor_size: Vec2 = ctx.input(|i| i.viewport().monitor_size.unwrap());
             let monitor_rect = Rect::from_min_size(Pos2::ZERO, monitor_size);
-            let selection = egui::Rect::from_two_pos(self.selected_area[0], self.selected_area[1]);
+            let selection = egui::Rect::from_two_pos(self.selected_area[0], self.selected_area[1]); */
+
             let files = FileDialog::new()
                 .add_filter("PNG", &["png"])
                 .add_filter("JPG", &["jpg"])
@@ -663,8 +675,9 @@ impl MyApp {
                 .set_directory("/")
                 .save_file();
             let ext = files.clone();
-            if let Some(mut img) = self.image.clone() {
-                let shrink = monitor_rect.width() / (img.width() as f32);
+
+            if let Some(mut _img) = self.image.clone() {
+/*                 let shrink = monitor_rect.width() / (img.width() as f32);
                 let top_left_x = (selection.left_top().x - Pos2::ZERO.x) / shrink;
                 let top_left_y = (selection.left_top().y - Pos2::ZERO.y) / shrink;
                 let width = selection.width() / shrink;
@@ -678,7 +691,10 @@ impl MyApp {
                     height as u32,
                 );
 
-                let img = img_crop.to_image();
+                let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> = img_crop.to_image(); */
+
+                let img = self.crop_image(ctx);
+                
                 if let Some(save_path) = ext.as_ref() {
                     if let Some(extension) = save_path.extension() {
                         let extension_str = extension.to_string_lossy().to_lowercase();
