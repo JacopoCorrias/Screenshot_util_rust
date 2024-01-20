@@ -3,7 +3,6 @@ use eframe::egui::{
     TopBottomPanel, ViewportCommand,
 };
 use eframe::epaint::{vec2, Color32, Rounding, Stroke};
-use env_logger::fmt::Color;
 use screenshots::Screen;
 use std::ops::{Add, Div};
 use std::{thread, time};
